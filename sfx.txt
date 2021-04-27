@@ -1,0 +1,6 @@
+./sfx/sfx0.wav
+./sfx/sfx1.wav
+./sfx/sfx2.wav
+./sfx/sfxStart.wav
+./sfx/sfxRoundComplete.wav
+./sfx/sfxGameOver.wav
