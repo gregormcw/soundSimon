@@ -10,58 +10,41 @@
 #include "paUtils.h"
 #include <stdatomic.h>
 
-// Maximum length of game array
-// (Maximum number of rounds)
-#define MAX_LEN     100
-
+#define MAX_ROUNDS          100
 #define MAX_PATH_LEN        256
 #define MAX_FILES           8
 #define MAX_CHAN            2
 #define FRAMES_PER_BUFFER   1024 
 #define NUM_OPTIONS         3
-
 #define DEBUG               0
 
 
-/*  TO DO - 04/25:
+/*  TO DO - 04/27:
 
--   Play audio once for each sequence index (stop pA looping)
--   Play audio once for each user input
+-   Protect against user input before playback finished
+-   Play audio once for each user input?
 -   Clean up
 -   Additional SFX
 -   Ensure use of invalid multi-char keys, e.g. arrow keys, don't end game
+-   Struct for audio
+-   x buffer, number of frames in x buffer
+-   output channels
 
 */
 
-// Make two functions:
-// playSound(float *x, int framesToPlay, int channel);
-//      make stereo file
-//      Start up portAudio
-//      play until end of buffer
-//      Shut down portAudio
-
-// Struct for audio
-// x buffer, number of frames in x buffer
-// output channels
 
 typedef struct {
-    atomic_int selection;   // Start, error, end, move
+    atomic_int selection;
     unsigned int channels;
     unsigned int samplerate;
     float *x[MAX_FILES];
     unsigned long frames[MAX_FILES];
     unsigned long next_frame[MAX_FILES];
     unsigned long round;
-    int gameArray[MAX_LEN];
+    int gameArray[MAX_ROUNDS];
     int playback;
     int curRound;
-    // Start tone, first move, second move
-    // 0 move = start?
-    // Specific buffer for zeros
-    // Flag somewhere in callback? -1 for zeros
-    // 0 for start tone
-    // play through all rounds
-
+    // int notification;
 } Buf;
 
 static int paCallback( const void *inputBuffer, void *outputBuffer,
@@ -101,7 +84,7 @@ int main(int argc, char** argv) {
         return -1;
     }
 
-    /* Open list of files */
+    // OPEN LIST OF FILES
 
     // Direct file pointer to command line argument
     fp = fopen(argv[1], "r");
@@ -112,14 +95,15 @@ int main(int argc, char** argv) {
         return -1;
     }
 
-    /* read WAV filenames from the list in ifile_list.txt */
-    /* print information about each WAV file */
+    // read WAV filenames from the list in ifile_list.txt
+    // print information about each WAV file
 
 
 // AUDIO FILE READ: START
 ///////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////
+
 
     // Read in all sound effects and assign to SNDFILE struct
 
@@ -145,7 +129,7 @@ int main(int argc, char** argv) {
                 i, sfinfo.frames, sfinfo.channels, sfinfo.samplerate, ifilename[i]);
         }
 
-        /* check compatibility of input WAV files
+        /* Check compatibility of input WAV files
          * If sample rates don't match, print error and exit 
          * If number of channels don't match, print error and exit
          * if too many channels, print error and exit
@@ -160,6 +144,7 @@ int main(int argc, char** argv) {
         // Set next frame to 0
         p->next_frame[i] = 0;
 
+        // Set playback flag to false
         p->playback = 0;
 
         // On the first iteration, retrieve channel and sample rate information
@@ -218,6 +203,7 @@ int main(int argc, char** argv) {
     /* close input filelist */
     fclose(fp);
 
+
 // AUDIO FILE READ: END
 ///////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////
@@ -230,8 +216,6 @@ int main(int argc, char** argv) {
 ///////////////////////////////////////////////////////////////////
 
 
-    // int round = 0; // SHOULD BE PART OF Game struct ************************
-    // float fl = 0.1;
     srand(time(0));
 
     int isValid(int c);
@@ -240,7 +224,6 @@ int main(int argc, char** argv) {
     int getRandNum(void);
     void newGameArrayVal(Game *gp, Buf *p, PaStream *stream);
     int intToIdx(int c);
-    void playSound(float *x, Buf *p, Game *gp, int framesToPlay, int selection);
 
     gp->round = 0;
     p->round = 0;
@@ -280,9 +263,6 @@ int main(int argc, char** argv) {
 
         printw("         Starting now. Get ready!\n");
         // p->selection = 3;
-        // Pa_Sleep(2000);
-
-        // playGame(); // CREATE FUNCTION FROM WHICH GAME IS RUN ********************
 
         // Wait for user input, return int value of key
         while (gp->isPlaying) {
@@ -300,7 +280,6 @@ int main(int argc, char** argv) {
 
             // Play all array values to user
             printGameState(gp, p, stream);
-            // Pa_Sleep( (((gp->round+1) * p->frames[0]) / p->samplerate) * 1000);
 
             for (int i = 0; i < gp->round+1; i++) {
 
@@ -311,9 +290,7 @@ int main(int argc, char** argv) {
                     clear();
                     printStartScreen();
                     printw("\t  Thank you for playing!\n");
-                    // napms(1000); // FIX THIS ********************
                     gp->isPlaying = 0;
-                    // shutdownPa(stream); // SHOULD ONLY BE STATED AT END OF WHILE LOOP **
                     break;
                 }
 
@@ -332,15 +309,12 @@ int main(int argc, char** argv) {
                     printw("\n          Wrong input. Game over!\n");
                     // p->selection = 5;
                     break;
-                    napms(1000); // FIX THIS ********************
 
                 }
 
                 else if (c == gp->gameArray[i]) {
                     printw("          Correct! You entered: %c\n", c);
 
-                    if (i == gp->round)
-                        napms(1000); // FIX THIS *********************
                 }             
             }
             gp->round += 1;
@@ -354,7 +328,6 @@ int main(int argc, char** argv) {
     endwin();
 
     // Shut down PortAudio
-    Pa_Sleep(500);
     shutdownPa(stream);
 
     return 0;
@@ -392,10 +365,10 @@ void printGameState(Game *gp, Buf *p, PaStream *stream) {
     
     printw("\t\t ROUND %d\n ", gp->round+1);
 
-    for (int i = 0; i < gp->round+1; i++) {
-
-        printw("\t       Round %d: %c\n", i+1, gp->gameArray[i]);
-
+    if (DEBUG) {
+        for (int i = 0; i < gp->round+1; i++) {
+            printw("\t       Round %d: %c\n", i+1, gp->gameArray[i]);
+        }
     }
 
     printw("       Can you repeat what I played?\n\n");
@@ -423,7 +396,6 @@ int getRandNum(void) {
     int lower = 0;
 
     randNum = rand() % (1 + upper - lower);
-
     return randNum;
 }
 
@@ -452,20 +424,9 @@ void newGameArrayVal(Game *gp, Buf *p, PaStream *stream) {
 
     gp->gameArray[gp->round] = numKey[randNum];
     p->gameArray[gp->round] = numKey[randNum];
-    sleep(1);
     p->curRound = 0;
     p->selection = randNum;
     p->playback = 1;
-}
-
-
-void playSound(float *x, Buf *p, Game *gp, int framesToPlay, int selection) {
-
-    //      Make stereo file
-    //      Start up portAudio
-    //      Play until end of buffer
-    //      Shut down portAudio
-
 }
 
 
@@ -487,31 +448,6 @@ static int paCallback(const void *inputBuffer, void *outputBuffer,
     Buf *p = (Buf *)userData; // Cast data passed through stream to our structure
     float *output = (float *)outputBuffer;
     atomic_int selection;
- 
-    // ===============================================================================
-    // ===============================================================================
-    // ===============================================================================
-    // SELECTION SHOULD BE THE GAME ARRAY!
-    // ===============================================================================
-    // If selection is -1, all zeros
-    // If selection < NUM_OPTIONS, then look for next selection round times then selection = -1
-    // If selection > NUM_OPTIONS, play once then selection = -1
-    // ===============================================================================
-    // ===============================================================================
-    // Selection now determines channel, and length of audio file is great.
-    //      -> All that needs to happen is consistent stream from round 0 to current round, then sel = -1
-    // ===============================================================================
-    // ===============================================================================
-    // ===============================================================================
-
-    // Pointer to signal buffer, how many frames it is, where it is as you play it out
-    // 
-
-    //
-    // PASS OUTPUT CHANNELS AS ARRAY *******************************
-    //
-
-    // CHANGE THIS
 
     if (!p->playback) {
         for (int i = 0; i < framesPerBuffer * p->channels; i++) {
@@ -523,11 +459,9 @@ static int paCallback(const void *inputBuffer, void *outputBuffer,
 
         selection = intToIdx(p->gameArray[p->curRound]);
 
-        // selection = p->gameArray[0];
         int next_sample, k = 0;
         int endOfBuff = p->next_frame[selection] + framesPerBuffer;
         unsigned long endOfSeq = (p->round+1) * p->frames[0];
-
         unsigned long seqIndex = p->curRound * p->frames[0] + p->next_frame[selection] + framesPerBuffer;
 
         if (seqIndex >= endOfSeq) {
@@ -539,7 +473,6 @@ static int paCallback(const void *inputBuffer, void *outputBuffer,
             p->next_frame[selection] = 0;
             p->selection = intToIdx(p->gameArray[p->curRound + 1]);
             p->curRound++;
-            //printw("Now playing: %d\n", p->gameArray[++i]);
         }
 
         // Otherwise, set next sample as next frame * number of channels
@@ -566,7 +499,7 @@ static int paCallback(const void *inputBuffer, void *outputBuffer,
 }
 
 
-// AUDIO CALLBACK: END
+// AUDIO CALLBACK: END ====================== THANKS FOR READING!!!
 ///////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////
