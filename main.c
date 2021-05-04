@@ -1,52 +1,25 @@
-#include <stdio.h>
+// Gregor McWilliam -- gbm5862
+
 #include <stdlib.h>
 #include <string.h>
 #include <ncurses.h>
 #include <time.h>
-#include "unistd.h"
-#include "game.h"
 #include <sndfile.h>
 #include <portaudio.h>
-#include "paUtils.h"
 #include <stdatomic.h>
+#include "game.h"
+#include "buf.h"
+#include "paUtils.h"
 
 #define MAX_ROUNDS          100
 #define MAX_PATH_LEN        256
 #define MAX_FILES           8
 #define MAX_CHAN            2
 #define FRAMES_PER_BUFFER   1024 
-#define NUM_OPTIONS         3
 #define DEBUG               0
 
 
-/*  TO DO - 04/27:
-
--   Protect against user input before playback finished
--   Play audio once for each user input?
--   Clean up
--   Additional SFX
--   Ensure use of invalid multi-char keys, e.g. arrow keys, don't end game
--   Struct for audio
--   x buffer, number of frames in x buffer
--   output channels
-
-*/
-
-
-typedef struct {
-    atomic_int selection;
-    unsigned int channels;
-    unsigned int samplerate;
-    float *x[MAX_FILES];
-    unsigned long frames[MAX_FILES];
-    unsigned long next_frame[MAX_FILES];
-    unsigned long round;
-    int gameArray[MAX_ROUNDS];
-    int playback;
-    int curRound;
-    // int notification;
-} Buf;
-
+// Callback function prototype
 static int paCallback( const void *inputBuffer, void *outputBuffer,
     unsigned long framesPerBuffer,
     const PaStreamCallbackTimeInfo* timeInfo,
@@ -129,12 +102,6 @@ int main(int argc, char** argv) {
                 i, sfinfo.frames, sfinfo.channels, sfinfo.samplerate, ifilename[i]);
         }
 
-        /* Check compatibility of input WAV files
-         * If sample rates don't match, print error and exit 
-         * If number of channels don't match, print error and exit
-         * if too many channels, print error and exit
-         */
-
         // Set number of input files to 0
         num_input_files = 0;
         
@@ -200,7 +167,7 @@ int main(int argc, char** argv) {
     // Assign number of files iterated through to variable
     num_input_files = i;
 
-    /* close input filelist */
+    // Close list of input files
     fclose(fp);
 
 
@@ -216,57 +183,59 @@ int main(int argc, char** argv) {
 ///////////////////////////////////////////////////////////////////
 
 
+    // Use time as seed for generation of random values
     srand(time(0));
 
-    int isValid(int c);
-    void printStartScreen(void);
-    void printGameState(Game *gp, Buf *p, PaStream *stream);
-    int getRandNum(void);
-    void newGameArrayVal(Game *gp, Buf *p, PaStream *stream);
-    int intToIdx(int c);
-
+    // Set initial struct member variable values
     gp->round = 0;
     p->round = 0;
     gp->isPlaying = 1;
     gp->lastInputValid = 1;
     p->selection = -1;
+    p->readyForUserInput = 1;
 
+    // Start PortAudio
     stream = startupPa(1, p->channels, p->samplerate, FRAMES_PER_BUFFER, 
         paCallback, &buf);
 
-    // Initializes screen, sets up memory, and clears screen
+    // Initialize ncurses screen
     initscr();
     cbreak();
+
+    // Do not display user input
     noecho();
 
-    // Prints string(const char*) to a window
+    // Display start screen
     printStartScreen();
 
     // Refreshes screen to match what is in memory
     refresh();
 
+    // Wait for user input, and assign to type int
     int c = getch();
 
+    // If user does not begin or quit game, display that input is invalid
     while (c != ' ' && c != 'p') {
-
         clear();
         printStartScreen();
         printw("%c is not a valid key.\n", c);
         c = getch();
-
     }
 
+    // When input is valid, refresh start screen
     clear();
     printStartScreen();
 
+    // If user presses the space bar, begin game and provide notification
     if (c == ' ') {
 
         printw("         Starting now. Get ready!\n");
         // p->selection = 3;
 
-        // Wait for user input, return int value of key
+        // Loop while isPlaying evaluates to true
         while (gp->isPlaying) {
 
+            // If user has completed round, display congratulatory notification
             if (gp->round > 0) {
                 clear();
                 printStartScreen();
@@ -274,26 +243,35 @@ int main(int argc, char** argv) {
                 // p->selection = 4;
             }
 
-            // Generate new array value
+            // If, last user input was valid, generate new game sequence value
             if (gp->lastInputValid)
                 newGameArrayVal(gp, p, stream);
 
             // Play all array values to user
             printGameState(gp, p, stream);
 
+            // Protect against early user input during playback
+            while (!p->readyForUserInput) {
+                // Do nothing
+            }
+
+            // For each round, wait for user input and compare against
+            // correct sequence value at that index
             for (int i = 0; i < gp->round+1; i++) {
 
                 c = getch();
                 // p->selection = intToIdx(c);
 
+                // If user presses 'p', quit game
                 if (c == 'p') {
                     clear();
                     printStartScreen();
-                    printw("\t  Thank you for playing!\n");
+                    printw("   You scored %d! Thank you for playing!\n", gp->round);
                     gp->isPlaying = 0;
                     break;
                 }
 
+                // If user presses invalid key, display notification
                 while (!isValid(c)) {
                     gp->lastInputValid = 0;
                     clear();
@@ -302,25 +280,35 @@ int main(int argc, char** argv) {
                     c = getch();
                 }
 
+                // Otherwise, last user input was valid, so set flag to true
                 gp->lastInputValid = 1;
 
+                // If user input does not match the correct game sequence value, 
+                // notify that game is over, set isPlayinf flag to false, and 
+                // break out of while loop
                 if (c != gp->gameArray[i]) {
                     gp->isPlaying = 0;
-                    printw("\n          Wrong input. Game over!\n");
+                    printw("\n  Wrong input. GAME OVER. You scored %d!\n", gp->round);
                     // p->selection = 5;
                     break;
 
                 }
 
+                // Otherwise, user input was correct for that index, so
+                // display notification
                 else if (c == gp->gameArray[i]) {
                     printw("          Correct! You entered: %c\n", c);
 
                 }             
             }
+
+            // Increment round by 1 in both structs
             gp->round += 1;
             p->round = gp->round;
         }
-        printw("           Hit any key to exit\n"); // FIX THIS **********
+
+        // If game is over, user may hit any key to exit
+        printw("           Hit any key to exit\n");
         c = getch();
     }
 
@@ -338,96 +326,6 @@ int main(int argc, char** argv) {
 ///////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////
-
-
-// HELPER FUNCTIONS: START
-///////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////
-
-
-// Prints start screen to console
-void printStartScreen(void) {
-    printw("==========================================\n");
-    printw("         Welcome to Sound Simon!\n");
-    printw("==========================================\n");
-    printw("==========================================\n");
-    printw(" Controls: a = left, w = front, d = right\n");
-    printw("==========================================\n");
-    printw("       ** Hit SpaceBar to start **\n");
-    printw("          ** Press p to quit **\n");
-    printw("\n");
-}
-
-
-// Plays current audio sequence to user, pausing between each index
-void printGameState(Game *gp, Buf *p, PaStream *stream) {
-    
-    printw("\t\t ROUND %d\n ", gp->round+1);
-
-    if (DEBUG) {
-        for (int i = 0; i < gp->round+1; i++) {
-            printw("\t       Round %d: %c\n", i+1, gp->gameArray[i]);
-        }
-    }
-
-    printw("       Can you repeat what I played?\n\n");
-}
-
-
-// Determines whether user input is valid
-int isValid(int c) {
-
-    int validKeys[6] = {'a', 'w', 'd', 'D', 'A', 'C'};
-
-    for (int i = 0; i < 6; i++) {
-        if (c == validKeys[i])
-            return 1;
-    }
-    return 0;
-}
-
-
-// Generates random number in range [0, 2]
-int getRandNum(void) {
-
-    int randNum;
-    int upper = 2;
-    int lower = 0;
-
-    randNum = rand() % (1 + upper - lower);
-    return randNum;
-}
-
-
-// Converts user input to relevant output channel value
-int intToIdx(int c) {
-
-    if (c == 'a')
-        return 0;
-
-    if (c == 'w')
-        return 1;
-
-    if (c == 'd')
-        return 2;
-
-    return -1;
-}
-
-
-// Assigns random number to game array at current index
-void newGameArrayVal(Game *gp, Buf *p, PaStream *stream) {
-
-    int randNum = getRandNum();
-    int numKey[3] = {'a', 'w', 'd'};
-
-    gp->gameArray[gp->round] = numKey[randNum];
-    p->gameArray[gp->round] = numKey[randNum];
-    p->curRound = 0;
-    p->selection = randNum;
-    p->playback = 1;
-}
 
 
 // AUDIO CALLBACK: START
@@ -449,6 +347,7 @@ static int paCallback(const void *inputBuffer, void *outputBuffer,
     float *output = (float *)outputBuffer;
     atomic_int selection;
 
+    // If playback flag is false, output only zeros
     if (!p->playback) {
         for (int i = 0; i < framesPerBuffer * p->channels; i++) {
             output[i] = 0.0;
@@ -457,25 +356,50 @@ static int paCallback(const void *inputBuffer, void *outputBuffer,
 
     else {
 
+        // Otherwise, selected file is determined by game sequence value at
+        // current round, which will have range [0, round-1]
         selection = intToIdx(p->gameArray[p->curRound]);
 
+        // Declare and initialize variables
         int next_sample, k = 0;
         int endOfBuff = p->next_frame[selection] + framesPerBuffer;
-        unsigned long endOfSeq = (p->round+1) * p->frames[0];
-        unsigned long seqIndex = p->curRound * p->frames[0] + p->next_frame[selection] + framesPerBuffer;
 
+        // Determine end of sequence and current sequence index
+        // relative to curRound
+        unsigned long endOfSeq = (p->round+1) * p->frames[0];
+
+        unsigned long seqIndex = p->curRound * p->frames[0] 
+            + p->next_frame[selection] + framesPerBuffer;
+
+        // If sequence index is beyond the end of the entire game sequence,
+        // all audio has been played and playback is set to false
         if (seqIndex >= endOfSeq) {
+
+            // Reset file pointer
             p->next_frame[selection] = 0;
+
+            // Turn off audible playback
             p->playback = 0;
+
+            // Communicate to main() that game is ready for user input
+            p->readyForUserInput = 1;
         }
 
+        // If sequence index is >= current audio file, but NOT >= the entire
+        // game sequence, continue to next game sequence value
         if (endOfBuff >= p->frames[selection] && endOfBuff < endOfSeq) {
+
+            // Reset file pointer
             p->next_frame[selection] = 0;
+
+            // Determine next file
             p->selection = intToIdx(p->gameArray[p->curRound + 1]);
+
+            // Increment curRound
             p->curRound++;
         }
 
-        // Otherwise, set next sample as next frame * number of channels
+        // Set next sample as next frame * number of channels
         next_sample = p->next_frame[selection] * p->channels;
 
         // Iterate through the current buffer, considering all channels
